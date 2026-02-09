@@ -1,7 +1,14 @@
+require('dotenv').config({ path: '.env.local' });
 const express = require('express');
 const cors = require('cors');
 const Joi = require('joi');
-const { sql } = require('@vercel/postgres');
+const { createClient } = require('@supabase/supabase-js');
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.VITE_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,36 +28,40 @@ const flashcardSchema = Joi.object({
 
 // Database helper functions
 async function getFlashcardsByLevel(level) {
-  const { rows } = await sql`
-    SELECT id, chinese, pinyin, vietnamese, example, example_vi, created_at, updated_at
-    FROM flashcards
-    WHERE level = ${level}
-    ORDER BY id
-  `;
-  return rows;
+  const { data, error } = await supabase
+    .from('flashcards')
+    .select('*')
+    .eq('level', level)
+    .order('id');
+  
+  if (error) throw error;
+  return data;
 }
 
 async function addFlashcards(level, flashcards) {
-  const values = flashcards.map(card => 
-    sql`(${level}, ${card.chinese}, ${card.pinyin}, ${card.vietnamese}, ${card.example}, ${card.example_vi})`
-  );
+  const flashcardsWithLevel = flashcards.map(card => ({
+    ...card,
+    level
+  }));
   
-  const { rows } = await sql`
-    INSERT INTO flashcards (level, chinese, pinyin, vietnamese, example, example_vi)
-    VALUES ${sql.join(values, sql`, `)}
-    RETURNING id, chinese, pinyin, vietnamese, example, example_vi, created_at, updated_at
-  `;
+  const { data, error } = await supabase
+    .from('flashcards')
+    .insert(flashcardsWithLevel)
+    .select();
   
-  return rows;
+  if (error) throw error;
+  return data;
 }
 
 async function levelExists(level) {
-  const { rows } = await sql`
-    SELECT COUNT(*) as count
-    FROM flashcards
-    WHERE level = ${level}
-  `;
-  return parseInt(rows[0].count) > 0;
+  const { data, error } = await supabase
+    .from('flashcards')
+    .select('id')
+    .eq('level', level)
+    .limit(1);
+  
+  if (error) throw error;
+  return data.length > 0;
 }
 
 // GET /flashcards/:level - Get all flashcards for a specific level

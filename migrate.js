@@ -1,5 +1,12 @@
-const { sql } = require('@vercel/postgres');
+require('dotenv').config({ path: '.env.local' });
+const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs').promises;
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.VITE_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 async function migrateData() {
   try {
@@ -7,7 +14,7 @@ async function migrateData() {
     const data = await fs.readFile('flashcards.json', 'utf8');
     const flashcards = JSON.parse(data);
     
-    console.log('Starting migration...');
+    console.log('Starting migration to Supabase...');
     
     for (const [level, cards] of Object.entries(flashcards)) {
       console.log(`Migrating ${cards.length} flashcards for level: ${level}`);
@@ -16,14 +23,20 @@ async function migrateData() {
       const batchSize = 50;
       for (let i = 0; i < cards.length; i += batchSize) {
         const batch = cards.slice(i, i + batchSize);
-        const values = batch.map(card => 
-          sql`(${level}, ${card.chinese}, ${card.pinyin}, ${card.vietnamese}, ${card.example}, ${card.example_vi})`
-        );
+        const flashcardsWithLevel = batch.map(card => ({
+          ...card,
+          level
+        }));
         
-        await sql`
-          INSERT INTO flashcards (level, chinese, pinyin, vietnamese, example, example_vi)
-          VALUES ${sql.join(values, sql`, `)}
-        `;
+        const { data: insertedData, error } = await supabase
+          .from('flashcards')
+          .insert(flashcardsWithLevel)
+          .select();
+        
+        if (error) {
+          console.error(`Error inserting batch ${Math.floor(i/batchSize) + 1}:`, error);
+          throw error;
+        }
         
         console.log(`Migrated batch ${Math.floor(i/batchSize) + 1} for level ${level}`);
       }
@@ -32,11 +45,25 @@ async function migrateData() {
     console.log('Migration completed successfully!');
     
     // Verify migration
-    const { rows } = await sql`SELECT level, COUNT(*) as count FROM flashcards GROUP BY level ORDER BY level`;
-    console.log('Migration summary:');
-    rows.forEach(row => {
-      console.log(`  ${row.level}: ${row.count} flashcards`);
-    });
+    const { data: summary, error } = await supabase
+      .from('flashcards')
+      .select('level')
+      .then(({ data }) => {
+        const counts = {};
+        data.forEach(item => {
+          counts[item.level] = (counts[item.level] || 0) + 1;
+        });
+        return { data: counts };
+      });
+    
+    if (error) {
+      console.error('Error verifying migration:', error);
+    } else {
+      console.log('Migration summary:');
+      Object.entries(summary.data).forEach(([level, count]) => {
+        console.log(`  ${level}: ${count} flashcards`);
+      });
+    }
     
   } catch (error) {
     console.error('Migration failed:', error);

@@ -1,56 +1,48 @@
-const { sql } = require('@vercel/postgres');
+require('dotenv').config({ path: '.env.local' });
+const { createClient } = require('@supabase/supabase-js');
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.VITE_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 async function setupDatabase() {
   try {
-    console.log('Setting up database schema...');
+    console.log('Setting up Supabase database schema...');
     
-    // Create flashcards table
-    await sql`
-      CREATE TABLE IF NOT EXISTS flashcards (
-        id SERIAL PRIMARY KEY,
-        level VARCHAR(10) NOT NULL,
-        chinese TEXT NOT NULL,
-        pinyin TEXT NOT NULL,
-        vietnamese TEXT NOT NULL,
-        example TEXT NOT NULL,
-        example_vi TEXT NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      )
-    `;
-    console.log('✅ Flashcards table created');
-
-    // Create index
-    await sql`
-      CREATE INDEX IF NOT EXISTS idx_flashcards_level ON flashcards(level)
-    `;
-    console.log('✅ Index created');
-
-    // Create trigger function
-    await sql`
-      CREATE OR REPLACE FUNCTION update_updated_at_column()
-      RETURNS TRIGGER AS $$
-      BEGIN
-        NEW.updated_at = CURRENT_TIMESTAMP;
-        RETURN NEW;
-      END;
-      $$ language 'plpgsql'
-    `;
-    console.log('✅ Trigger function created');
-
-    // Create trigger
-    await sql`
-      DROP TRIGGER IF EXISTS update_flashcards_updated_at ON flashcards
-    `;
+    // Check if table exists
+    const { data: tables, error: tableError } = await supabase
+      .from('flashcards')
+      .select('id')
+      .limit(1);
     
-    await sql`
-      CREATE TRIGGER update_flashcards_updated_at 
-        BEFORE UPDATE ON flashcards 
-        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
-    `;
-    console.log('✅ Trigger created');
-
-    console.log('🎉 Database setup completed successfully!');
+    if (!tableError) {
+      console.log('✅ Flashcards table already exists');
+    } else {
+      console.log('⚠️  Table may not exist. Please run the SQL from schema.sql in your Supabase dashboard:');
+      console.log('https://vslennkybtjcifjgatwq.supabase.co/project/sql');
+      console.log('\nSQL to run:');
+      console.log('```sql');
+      console.log('-- Create flashcards table');
+      console.log('CREATE TABLE IF NOT EXISTS flashcards (');
+      console.log('  id SERIAL PRIMARY KEY,');
+      console.log('  level VARCHAR(10) NOT NULL,');
+      console.log('  chinese TEXT NOT NULL,');
+      console.log('  pinyin TEXT NOT NULL,');
+      console.log('  vietnamese TEXT NOT NULL,');
+      console.log('  example TEXT NOT NULL,');
+      console.log('  example_vi TEXT NOT NULL,');
+      console.log('  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,');
+      console.log('  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP');
+      console.log(');');
+      console.log('');
+      console.log('-- Create index for faster queries by level');
+      console.log('CREATE INDEX IF NOT EXISTS idx_flashcards_level ON flashcards(level);');
+      console.log('```');
+    }
+    
+    console.log('🎉 Database setup completed!');
     
   } catch (error) {
     console.error('❌ Database setup failed:', error);
