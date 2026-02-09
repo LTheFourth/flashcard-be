@@ -53,6 +53,28 @@ async function addFlashcards(level, flashcards) {
   return data;
 }
 
+async function checkWordExists(level, chinese) {
+  const { data, error } = await supabase
+    .from('flashcards')
+    .select('id')
+    .eq('level', level)
+    .eq('chinese', chinese)
+    .limit(1);
+  
+  if (error) throw error;
+  return data.length > 0;
+}
+
+async function deleteAllFlashcardsInLevel(level) {
+  const { error } = await supabase
+    .from('flashcards')
+    .delete()
+    .eq('level', level);
+  
+  if (error) throw error;
+  return true;
+}
+
 async function levelExists(level) {
   const { data, error } = await supabase
     .from('flashcards')
@@ -98,17 +120,40 @@ app.post('/flashcards/:level', async (req, res) => {
       return res.status(400).json({ error: 'Request body must be an array of flashcards' });
     }
     
-    // Validate each flashcard
+    // Validate each flashcard and check for duplicates
     const validationErrors = [];
+    const duplicateWords = [];
+    
     for (let i = 0; i < newFlashcards.length; i++) {
-      const { error } = flashcardSchema.validate(newFlashcards[i]);
+      const flashcard = newFlashcards[i];
+      
+      // Validate flashcard structure
+      const { error } = flashcardSchema.validate(flashcard);
       if (error) {
         validationErrors.push(`Flashcard ${i + 1}: ${error.details[0].message}`);
+      }
+      
+      // Check if word already exists in this level
+      try {
+        const exists = await checkWordExists(level, flashcard.chinese);
+        if (exists) {
+          duplicateWords.push(flashcard.chinese);
+        }
+      } catch (err) {
+        validationErrors.push(`Flashcard ${i + 1}: Error checking for duplicates`);
       }
     }
     
     if (validationErrors.length > 0) {
       return res.status(400).json({ error: 'Validation failed', details: validationErrors });
+    }
+    
+    if (duplicateWords.length > 0) {
+      return res.status(409).json({ 
+        error: 'Duplicate words found', 
+        duplicates: duplicateWords,
+        message: `${duplicateWords.length} word(s) already exist in level '${level}'` 
+      });
     }
     
     // Add new flashcards to database
@@ -124,6 +169,35 @@ app.post('/flashcards/:level', async (req, res) => {
     });
   } catch (error) {
     console.error('Error adding flashcards:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE /flashcards/:level - Delete all flashcards from a level
+app.delete('/flashcards/:level', async (req, res) => {
+  try {
+    const { level } = req.params;
+    
+    // Check if level exists
+    const exists = await levelExists(level);
+    if (!exists) {
+      return res.status(404).json({ error: `Level '${level}' not found` });
+    }
+    
+    // Get count before deletion
+    const flashcards = await getFlashcardsByLevel(level);
+    const count = flashcards.length;
+    
+    // Delete all flashcards in level
+    await deleteAllFlashcardsInLevel(level);
+    
+    res.json({
+      message: `Deleted ${count} flashcards from level '${level}'`,
+      deleted_count: count,
+      level: level
+    });
+  } catch (error) {
+    console.error('Error deleting flashcards:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
